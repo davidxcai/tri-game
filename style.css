@@ -324,6 +324,9 @@ html, body {
 }
 
 .piece-shape {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   box-shadow: inset 0 -3px 6px rgba(0,0,0,0.25);
 }
 
@@ -351,6 +354,38 @@ html, body {
   height: 72%;
   border-radius: 4px;
   transform: rotate(45deg);
+}
+
+.piece-cutout {
+  pointer-events: none;
+}
+
+.piece-shape.owner-1 .piece-cutout { background: var(--p1-dark); }
+.piece-shape.owner-2 .piece-cutout { background: var(--p2-dark); }
+
+.piece-cutout.cutout-circle {
+  width: 32%;
+  height: 32%;
+  border-radius: 50%;
+}
+
+.piece-cutout.cutout-square {
+  width: 30%;
+  height: 30%;
+  border-radius: 2px;
+}
+
+.piece-cutout.cutout-diamond {
+  width: 28%;
+  height: 28%;
+  border-radius: 2px;
+  transform: rotate(45deg);
+}
+
+/* The diamond piece is itself rotated 45deg, so its square cutout needs
+   a counter-rotation to stay axis-aligned like the other pieces' cutouts. */
+.piece-shape.shape-diamond .piece-cutout.cutout-square {
+  transform: rotate(-45deg);
 }
 
 .action-bar {

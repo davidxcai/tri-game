@@ -481,6 +481,10 @@ const CAPTURE_FADE_MS = 300;
 
 const SHAPE_BY_TYPE = { A: 'square', B: 'diamond', C: 'circle' };
 
+// Each shape is weak against the shape it's cut out with: squares lose to
+// circles, diamonds lose to squares, circles lose to diamonds.
+const WEAKNESS_BY_SHAPE = { square: 'circle', diamond: 'square', circle: 'diamond' };
+
 function pieceShape(p) {
   return SHAPE_BY_TYPE[p.type];
 }
@@ -529,6 +533,11 @@ function createPieceToken(piece) {
 
   const shape = document.createElement('div');
   shape.className = `piece-shape owner-${piece.owner} shape-${pieceShape(piece)}${piece.role === 'leader' ? ' leader' : ''}`;
+
+  const cutout = document.createElement('div');
+  cutout.className = `piece-cutout cutout-${WEAKNESS_BY_SHAPE[pieceShape(piece)]}`;
+  shape.appendChild(cutout);
+
   inner.appendChild(shape);
 
   token.appendChild(inner);
