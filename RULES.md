@@ -270,6 +270,19 @@ role, or normal movement vector. Both pieces simply trade squares.
   draw, so the trailing player is pushed to actually contest captures. This
   counter resets to 0 every time any piece is captured (neutral, advantage,
   disadvantage, or bonus-action capture).
+
+  This is also what resolves an unusual but real dead position: because
+  Diamond pieces (Squadron and Leader alike) only ever move diagonally,
+  a Diamond piece can never change the color of square it occupies. If a
+  game comes down to both sides' last Leader being a Diamond, and they sit
+  on opposite-colored squares, neither can ever reach the other — capture is
+  permanently impossible, no matter how the rest of the position develops.
+  No special-case detection is needed for this: it's just a position where
+  no capture will ever occur, so the no-progress counter runs out in the
+  normal way and (with equal Leader counts, 1 each) ends the game in a draw
+  within at most 40 rounds. An implementation may optionally detect this
+  kind of dead position instantly for a faster/cleaner ending, but it is not
+  required for correctness.
 - **Stall resolution — repetition (implementation-only safeguard, not part
   of the printed rulebook)**: the reference implementation additionally
   tracks every distinct board position (full set of living pieces' squares
@@ -298,3 +311,33 @@ Each player's turn is exactly one of:
 Turns alternate strictly between Player 1 and Player 2, starting with
 whichever player was decided to go first (§1), until §8 resolves the game
 (win, draw, or a stall resolved by Leader count).
+
+## 10. Tournament Play (Optional)
+
+Everything above (§1–§9) is the complete rule set for a single game and is
+all that's needed for casual play — a casual game just needs to know who
+won, or that it was a draw, which §8 already fully determines.
+
+This section is an **optional layer for organized play** (a bracket, league,
+or any format that scores multiple games against each other). It does not
+change how any individual game is played or resolved — it only assigns
+points to the outcome §8 already produced, for tallying standings:
+
+| Outcome          | Winner points | Loser points | When it applies |
+|------------------|---------------|---------------|------------------|
+| Definitive Win   | 3             | 0             | Won by the normal Win condition (§8) — all 3 of the opponent's Commanders captured. |
+| Win by Decision  | 2             | 1             | Won via the no-progress or repetition stall-resolution (§8) with an unequal Leader count. |
+| Draw             | 1             | 1             | Any draw outcome from §8 (mutual elimination, or a stall-resolution with equal Leader counts). |
+
+Rationale: a Definitive Win requires actually finishing the opponent off,
+so it's worth more than winning because you held a Leader-count edge when
+the clock ran out without ever forcing the last capture. The trailing
+player in a Decision still banks 1 point rather than 0, since their game
+ended in a stall, not a defeat.
+
+A casual implementation should surface *which* outcome occurred (the
+reference implementation's end-of-game overlay already distinguishes
+"eliminated all Leaders" from "won on remaining Leaders after N turns" from
+"draw") without needing to track or display point totals at all. An
+implementation of organized play can layer the point table above on top of
+that same outcome without changing any in-game logic.
