@@ -16,10 +16,13 @@ const PIECE_STATS = {
 const BEATS = { A: 'B', B: 'C', C: 'A' };
 
 // Row 0 = Rank 9 (Player 2 back row) ... Row 8 = Rank 1 (Player 1 back row)
-const LAYOUT_P2_BACK = ['B', 'A_L', 'B', 'A', 'C_L', 'A', 'C', 'B_L', 'C'];   // Rank 9
-const LAYOUT_P2_FRONT = ['C', 'C', 'C', 'B', 'B', 'B', 'A', 'A', 'A'];        // Rank 8
-const LAYOUT_P1_FRONT = ['A', 'A', 'A', 'B', 'B', 'B', 'C', 'C', 'C'];        // Rank 2
-const LAYOUT_P1_BACK = ['C', 'B_L', 'C', 'A', 'C_L', 'A', 'B', 'A_L', 'B'];   // Rank 1
+// Each back-rank Commander's front-row neighbors are the type it beats (weak
+// against it) and its own back-rank flank neighbors are the type that beats
+// it (strong against it) - see RULES.md "How to Arrange".
+const LAYOUT_P2_BACK = ['C', 'A_L', 'C', 'B', 'C_L', 'B', 'A', 'B_L', 'A'];   // Rank 9
+const LAYOUT_P2_FRONT = ['B', 'B', 'B', 'A', 'A', 'A', 'C', 'C', 'C'];        // Rank 8
+const LAYOUT_P1_FRONT = ['C', 'C', 'C', 'A', 'A', 'A', 'B', 'B', 'B'];        // Rank 2
+const LAYOUT_P1_BACK = ['A', 'B_L', 'A', 'B', 'C_L', 'B', 'C', 'A_L', 'C'];   // Rank 1
 
 // ---------- Game state ----------
 
@@ -42,12 +45,17 @@ let turnCount = 1;
 // ends the game instead of looping indefinitely. Keyed by snapshotPositionKey().
 let positionHistory = new Map();
 let drawReason = null; // 'repetition' | 'no-progress' | null (null covers the mutual-annihilation case)
+// Set alongside `winner` (instead of `drawReason`) when a stall (no-progress
+// or repetition) is broken by a Commander-count decision rather than ending
+// in a draw. 'no-progress' | 'repetition' | null (null covers an ordinary
+// elimination win).
+let winReason = null;
 // Full rounds (turnCount) since either side's last capture - mirrors chess's
 // fifty-move rule so a game that isn't looping but also isn't going anywhere
 // (nobody being captured) still ends in a bounded number of turns instead of
 // grinding on for hundreds of them.
 let noCaptureRounds = 0;
-const NO_PROGRESS_ROUND_LIMIT = 50;
+const NO_PROGRESS_ROUND_LIMIT = 40;
 
 function isCPUControlled(owner) {
   if (gameMode === 'spectator') return true;
@@ -101,6 +109,7 @@ function newGame() {
   turnCount = 1;
   positionHistory = new Map();
   drawReason = null;
+  winReason = null;
   noCaptureRounds = 0;
   pieceLayerEl.innerHTML = '';
   pieceEls.clear();
@@ -297,7 +306,7 @@ function enterBonusMode(piece) {
   mode = 'bonus';
   selected = piece;
   legalMoves = getLegalMoves(piece);
-  swapTargets = [];
+  swapTargets = getSwapTargets(piece);
   render();
   maybeTriggerCPU();
 }
@@ -325,10 +334,7 @@ function concludeTurn() {
   // isn't going anywhere, even if it isn't strictly looping - end it instead
   // of grinding on for hundreds more turns.
   if (noCaptureRounds >= NO_PROGRESS_ROUND_LIMIT) {
-    mode = 'over';
-    winner = 'draw';
-    drawReason = 'no-progress';
-    render();
+    resolveStall('no-progress');
     return;
   }
 
@@ -339,15 +345,33 @@ function concludeTurn() {
   const seenCount = (positionHistory.get(key) || 0) + 1;
   positionHistory.set(key, seenCount);
   if (seenCount >= 3) {
-    mode = 'over';
-    winner = 'draw';
-    drawReason = 'repetition';
-    render();
+    resolveStall('repetition');
     return;
   }
 
   render();
   maybeTriggerCPU();
+}
+
+// The game isn't going anywhere on its own (no captures for a long stretch,
+// or the same position recurring) - the objective is capturing Commanders,
+// not Squadrons, so settle it by whoever has more Commanders left rather
+// than defaulting to a draw. Equal Commander counts (regardless of Squadron
+// counts) is the only case that's still a genuine draw - this specifically
+// denies a materially-losing player an easy draw by just running out the
+// clock instead of fighting for captures.
+function resolveStall(reason) {
+  mode = 'over';
+  const p1Leaders = countLeaders(1);
+  const p2Leaders = countLeaders(2);
+  if (p1Leaders === p2Leaders) {
+    winner = 'draw';
+    drawReason = reason;
+  } else {
+    winner = p1Leaders > p2Leaders ? 'P1' : 'P2';
+    winReason = reason;
+  }
+  render();
 }
 
 // Dispatches to the Easy bot (ai.js) or the Hard bot (ai-hard.js) depending
@@ -417,7 +441,12 @@ function onCellClick(r, c) {
 
   if (mode === 'bonus') {
     const dest = legalMoves.find((m) => m.row === r && m.col === c);
-    if (dest) executeMove(selected, dest, true);
+    if (dest) {
+      executeMove(selected, dest, true);
+      return;
+    }
+    const swapTarget = swapTargets.find((p) => p.id === (occupant && occupant.id));
+    if (swapTarget) executeSwap(selected, swapTarget);
     return;
   }
 
@@ -617,10 +646,14 @@ function renderStatus() {
     overlayText.textContent =
       winner === 'draw'
         ? drawReason === 'repetition'
-          ? 'The same position occurred three times - draw by repetition.'
+          ? 'The same position occurred three times with an equal number of Commanders remaining - draw by repetition.'
           : drawReason === 'no-progress'
-          ? `${NO_PROGRESS_ROUND_LIMIT} turns passed with no capture - draw by the no-progress rule.`
+          ? `${NO_PROGRESS_ROUND_LIMIT} turns passed with no capture, and both sides have an equal number of Commanders remaining - draw by the no-progress rule.`
           : 'Both sides lost their last Leader in mutual annihilation.'
+        : winReason === 'repetition'
+        ? `The same position occurred three times - ${winnerLabel} has more Commanders remaining.`
+        : winReason === 'no-progress'
+        ? `${NO_PROGRESS_ROUND_LIMIT} turns passed with no capture - ${winnerLabel} has more Commanders remaining.`
         : 'All opposing Leaders have been eliminated.';
     return;
   }
@@ -641,7 +674,7 @@ function renderStatus() {
       ? 'Tap Next to resolve the bonus move.'
       : isCPUTurn
       ? 'CPU is thinking…'
-      : 'Move again with the same piece, or skip to end your turn.';
+      : 'Move again with the same piece, swap with an adjacent ally, or skip to end your turn.';
     return;
   }
 

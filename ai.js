@@ -156,11 +156,14 @@ function pickBestAction(owner) {
   return bestActions[Math.floor(Math.random() * bestActions.length)].action;
 }
 
+// Returns the best bonus action as { type: 'move', dest } or { type: 'swap',
+// targetId }, or null to skip - a bonus action may be another move with the
+// same piece or a Tactical Swap with one of its adjacent allies.
 function pickBestBonusMove(owner) {
   const skipSnap = cloneSnapshot(pieces);
   const skipPiece = findById(skipSnap.pieces, selected.id);
   let bestScore = evaluateSnapshot(skipSnap, owner) + threatPenalty(skipSnap, skipPiece, owner);
-  let bestMove = null;
+  let bestAction = null;
 
   for (const m of legalMoves) {
     const snap = cloneSnapshot(pieces);
@@ -169,10 +172,23 @@ function pickBestBonusMove(owner) {
     const score = evaluateSnapshot(snap, owner) + threatPenalty(snap, p, owner);
     if (score > bestScore + 1e-9) {
       bestScore = score;
-      bestMove = m;
+      bestAction = { type: 'move', dest: m };
     }
   }
-  return bestMove;
+
+  for (const target of swapTargets) {
+    const snap = cloneSnapshot(pieces);
+    simApplySwap(snap, selected.id, target.id);
+    const a = findById(snap.pieces, selected.id);
+    const b = findById(snap.pieces, target.id);
+    const score = evaluateSnapshot(snap, owner) + threatPenalty(snap, a, owner) + threatPenalty(snap, b, owner);
+    if (score > bestScore + 1e-9) {
+      bestScore = score;
+      bestAction = { type: 'swap', targetId: target.id };
+    }
+  }
+
+  return bestAction;
 }
 
 function runCPUTurnStep() {
@@ -180,9 +196,14 @@ function runCPUTurnStep() {
   const owner = currentPlayer;
 
   if (mode === 'bonus') {
-    const move = pickBestBonusMove(owner);
-    if (move) executeMove(selected, move, true);
-    else skipBonusMove(); // bypasses onSkipBonus's human-input guard
+    const action = pickBestBonusMove(owner);
+    if (!action) {
+      skipBonusMove(); // bypasses onSkipBonus's human-input guard
+    } else if (action.type === 'move') {
+      executeMove(selected, action.dest, true);
+    } else {
+      executeSwap(selected, findById(pieces, action.targetId));
+    }
     return;
   }
 

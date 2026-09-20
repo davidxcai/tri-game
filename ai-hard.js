@@ -196,6 +196,7 @@ function negamaxBonus(snapshot, owner, pieceId, depth, alpha, beta, state) {
   if (checkAbort(state)) return 0;
   const piece = findById(snapshot.pieces, pieceId);
   const moves = piece && piece.alive ? getLegalMoves(piece, snapshot.board) : [];
+  const swaps = piece && piece.alive ? getSwapTargets(piece, snapshot.board) : [];
 
   let best = -negamax(snapshot, opponentOf(owner), depth - 1, -beta, -alpha, state); // skip bonus
   if (best > alpha) alpha = best;
@@ -206,6 +207,17 @@ function negamaxBonus(snapshot, owner, pieceId, depth, alpha, beta, state) {
     simApplyMove(child, pieceId, m);
     const over = snapshotWinner(child);
     const value = over ? terminalScore(over, owner) : -negamax(child, opponentOf(owner), depth - 1, -beta, -alpha, state);
+    if (value > best) best = value;
+    if (best > alpha) alpha = best;
+  }
+
+  // A bonus Tactical Swap never captures, so it can't end the game - no
+  // terminal check needed here (unlike the move loop above).
+  for (const target of swaps) {
+    if (alpha >= beta || state.aborted) break;
+    const child = cloneSnapshot(snapshot.pieces);
+    simApplySwap(child, pieceId, target.id);
+    const value = -negamax(child, opponentOf(owner), depth - 1, -beta, -alpha, state);
     if (value > best) best = value;
     if (best > alpha) alpha = best;
   }
@@ -293,18 +305,21 @@ function resultingPositionKey(owner, action, nextPlayer) {
   return snapshotPositionKey(snap.pieces, result.bonus ? owner : nextPlayer);
 }
 
+// Returns the best bonus action as { type: 'move', dest } or { type: 'swap',
+// targetId }, or null to skip.
 function pickBestBonusMoveHard(owner) {
   const rootSnapshot = cloneSnapshot(pieces);
   const piece = findById(rootSnapshot.pieces, selected.id);
   if (!piece || !piece.alive) return null;
   const moves = getLegalMoves(piece, rootSnapshot.board);
+  const swaps = getSwapTargets(piece, rootSnapshot.board);
 
   const deadline = Date.now() + HARD_TIME_BUDGET_MS;
   const state = { nodes: 0, deadline, aborted: false };
   const depth = Math.max(HARD_MAX_DEPTH - 1, 1);
 
   let bestScore = -negamax(rootSnapshot, opponentOf(owner), depth, -Infinity, Infinity, state);
-  let bestMove = null;
+  let bestAction = null;
 
   for (const m of moves) {
     if (state.aborted) break;
@@ -314,10 +329,22 @@ function pickBestBonusMoveHard(owner) {
     const value = over ? terminalScore(over, owner) : -negamax(child, opponentOf(owner), depth, -Infinity, Infinity, state);
     if (value > bestScore) {
       bestScore = value;
-      bestMove = m;
+      bestAction = { type: 'move', dest: m };
     }
   }
-  return bestMove;
+
+  for (const target of swaps) {
+    if (state.aborted) break;
+    const child = cloneSnapshot(rootSnapshot.pieces);
+    simApplySwap(child, selected.id, target.id);
+    const value = -negamax(child, opponentOf(owner), depth, -Infinity, Infinity, state);
+    if (value > bestScore) {
+      bestScore = value;
+      bestAction = { type: 'swap', targetId: target.id };
+    }
+  }
+
+  return bestAction;
 }
 
 function runHardCPUTurnStep() {
@@ -325,9 +352,14 @@ function runHardCPUTurnStep() {
   const owner = currentPlayer;
 
   if (mode === 'bonus') {
-    const move = pickBestBonusMoveHard(owner);
-    if (move) executeMove(selected, move, true);
-    else skipBonusMove();
+    const action = pickBestBonusMoveHard(owner);
+    if (!action) {
+      skipBonusMove();
+    } else if (action.type === 'move') {
+      executeMove(selected, action.dest, true);
+    } else {
+      executeSwap(selected, findById(pieces, action.targetId));
+    }
     return;
   }
 
